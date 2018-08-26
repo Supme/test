@@ -13,21 +13,21 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	wg := &sync.WaitGroup{}
 
-	broker := NewBroker(10)
-	for i := 1; i <= 500; i++ {
-		if i == 150 {
-			broker.SetCount(5)
+	broker := NewBroker(20)
+	for i := 1; i <= 300; i++ {
+		if i == 100 {
+			broker.SetMax(10)
 		}
-		if i == 350 {
-			broker.SetCount(15)
+		if i == 200 {
+			broker.SetMax(15)
 		}
 		broker.Next()
 		wg.Add(1)
 		go func(i int) {
-			fmt.Println("Start worker number", i)
-			time.Sleep(time.Duration(rand.Int63n(1000)) * time.Millisecond)
-			fmt.Println("Finish worker", i)
+			fmt.Println("Start worker number", i, "current workers", broker.GetCurrent(), "from maximum", broker.GetMax())
+			time.Sleep(time.Duration(rand.Int63n(500000)+500000) * time.Microsecond)
 			broker.Ready()
+			fmt.Println("Finish worker", i)
 			wg.Done()
 		}(i)
 	}
@@ -38,36 +38,43 @@ type Broker struct {
 	maxCount     int64
 	currentCount int64
 	next         chan struct{}
-	free         chan struct{}
+	ready        chan struct{}
 }
 
 func NewBroker(count int64) *Broker {
 	b := Broker{maxCount: count, currentCount: 0}
 	b.next = make(chan struct{}, 1)
-	b.free = make(chan struct{}, 1)
+	b.ready = make(chan struct{}, 1)
 	b.start()
 	return &b
 }
 
 func (b *Broker) start() {
 	go func() {
-		for range b.free {
+		for range b.ready {
 			atomic.AddInt64(&b.currentCount, -1)
 		}
 	}()
 	go func() {
 		for {
-			if current := atomic.LoadInt64(&b.currentCount); current <= b.maxCount {
+			if atomic.LoadInt64(&b.currentCount) < atomic.LoadInt64(&b.maxCount) {
 				b.next <- struct{}{}
-				fmt.Println("Current count workers = ", current)
 				atomic.AddInt64(&b.currentCount, 1)
 			}
 		}
 	}()
 }
 
-func (b *Broker) SetCount(count int64) {
-	b.maxCount = count
+func (b *Broker) SetMax(count int64) {
+	atomic.StoreInt64(&b.maxCount, count)
+}
+
+func (b *Broker) GetCurrent() int64 {
+	return atomic.LoadInt64(&b.currentCount)
+}
+
+func (b *Broker) GetMax() int64 {
+	return atomic.LoadInt64(&b.maxCount)
 }
 
 func (b *Broker) Next() {
@@ -75,5 +82,5 @@ func (b *Broker) Next() {
 }
 
 func (b *Broker) Ready() {
-	b.free <- struct{}{}
+	b.ready <- struct{}{}
 }
